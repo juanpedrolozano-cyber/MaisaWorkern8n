@@ -26,12 +26,6 @@ export class MaisaWorker implements INodeType {
 		},
 		inputs: ['main'],
 		outputs: ['main'],
-		credentials: [
-			{
-				name: 'maisaWorkerApi',
-				required: true,
-			},
-		],
 		properties: [
 			{
 				displayName: 'Operation',
@@ -79,7 +73,18 @@ export class MaisaWorker implements INodeType {
 				type: 'string',
 				default: '',
 				required: true,
-				description: 'The base URL of the Maisa Worker API',
+				description: 'The base URL of the Maisa Worker API endpoint',
+			},
+			{
+				displayName: 'API Key',
+				name: 'apiKey',
+				type: 'string',
+				typeOptions: {
+					password: true,
+				},
+				default: '',
+				required: true,
+				description: 'The API key for this specific worker (ms-api-key header)',
 			},
 			// Run Worker fields
 			{
@@ -230,9 +235,7 @@ export class MaisaWorker implements INodeType {
 		const returnData: INodeExecutionData[] = [];
 		const operation = this.getNodeParameter('operation', 0) as string;
 		const baseUrl = this.getNodeParameter('baseUrl', 0) as string;
-		
-		const credentials = await this.getCredentials('maisaWorkerApi');
-		const apiKey = credentials.apiKey as string;
+		const apiKey = this.getNodeParameter('apiKey', 0) as string;
 
 		for (let i = 0; i < items.length; i++) {
 			try {
@@ -355,11 +358,10 @@ async function runWorker(
 			...formData.getHeaders(),
 		},
 		body: formData,
-		json: false,
 	};
 
 	const response = await this.helpers.request(options);
-	return JSON.parse(response);
+	return typeof response === 'string' ? JSON.parse(response) : response;
 }
 
 async function getStatus(
@@ -374,10 +376,10 @@ async function getStatus(
 		headers: {
 			'ms-api-key': apiKey,
 		},
-		json: true,
 	};
 
-	return await this.helpers.request(options);
+	const response = await this.helpers.request(options);
+	return typeof response === 'string' ? JSON.parse(response) : response;
 }
 
 async function listFiles(
@@ -392,10 +394,10 @@ async function listFiles(
 		headers: {
 			'ms-api-key': apiKey,
 		},
-		json: true,
 	};
 
-	return await this.helpers.request(options);
+	const response = await this.helpers.request(options);
+	return typeof response === 'string' ? JSON.parse(response) : response;
 }
 
 async function downloadFile(
@@ -412,7 +414,6 @@ async function downloadFile(
 			'ms-api-key': apiKey,
 		},
 		encoding: null,
-		json: false,
 	};
 
 	const response = await this.helpers.request(options);
