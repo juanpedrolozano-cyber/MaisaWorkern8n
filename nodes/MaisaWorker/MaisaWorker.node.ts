@@ -68,12 +68,13 @@ export class MaisaWorker implements INodeType {
 			},
 			// Base URL
 			{
-				displayName: 'Base URL',
+				displayName: 'Worker URL',
 				name: 'baseUrl',
 				type: 'string',
 				default: '',
 				required: true,
-				description: 'The base URL of the Maisa Worker API endpoint',
+				placeholder: 'https://studio-api.maisa.ai/deployed/YOUR_WORKER_ID/run',
+				description: 'The full URL of your Maisa Worker endpoint (with or without /run)',
 			},
 			{
 				displayName: 'API Key',
@@ -350,9 +351,18 @@ async function runWorker(
 		}
 	}
 
+	// Clean baseUrl and determine run endpoint
+	let cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+	const runUrl = cleanBaseUrl.endsWith('/run') ? cleanBaseUrl : `${cleanBaseUrl}/run`;
+	
+	// Extract base without /run for other endpoints
+	if (cleanBaseUrl.endsWith('/run')) {
+		cleanBaseUrl = cleanBaseUrl.slice(0, -4);
+	}
+	
 	const options = {
 		method: 'POST' as IHttpRequestMethods,
-		url: `${baseUrl}/run`,
+		url: runUrl,
 		headers: {
 			'ms-api-key': apiKey,
 			...formData.getHeaders(),
@@ -393,9 +403,14 @@ async function getStatus(
 	baseUrl: string,
 	apiKey: string,
 ): Promise<IDataObject> {
+	let cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+	if (cleanBaseUrl.endsWith('/run')) {
+		cleanBaseUrl = cleanBaseUrl.slice(0, -4);
+	}
+	
 	const options = {
 		method: 'GET' as IHttpRequestMethods,
-		url: `${baseUrl}/run/${executionId}`,
+		url: `${cleanBaseUrl}/run/${executionId}`,
 		headers: {
 			'ms-api-key': apiKey,
 		},
@@ -411,9 +426,14 @@ async function listFiles(
 	baseUrl: string,
 	apiKey: string,
 ): Promise<IDataObject> {
+	let cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+	if (cleanBaseUrl.endsWith('/run')) {
+		cleanBaseUrl = cleanBaseUrl.slice(0, -4);
+	}
+	
 	const options = {
 		method: 'GET' as IHttpRequestMethods,
-		url: `${baseUrl}/run/${executionId}/files`,
+		url: `${cleanBaseUrl}/run/${executionId}/files`,
 		headers: {
 			'ms-api-key': apiKey,
 		},
@@ -430,9 +450,14 @@ async function downloadFile(
 	baseUrl: string,
 	apiKey: string,
 ): Promise<IBinaryData> {
+	let cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+	if (cleanBaseUrl.endsWith('/run')) {
+		cleanBaseUrl = cleanBaseUrl.slice(0, -4);
+	}
+	
 	const options = {
 		method: 'GET' as IHttpRequestMethods,
-		url: `${baseUrl}/run/${executionId}/files/${fileName}`,
+		url: `${cleanBaseUrl}/run/${executionId}/files/${fileName}`,
 		headers: {
 			'ms-api-key': apiKey,
 		},
