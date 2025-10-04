@@ -5,6 +5,9 @@ import {
 	INodeTypeDescription,
 	NodeOperationError,
 	IDataObject,
+	IBinaryKeyData,
+	IBinaryData,
+	IHttpRequestMethods,
 } from 'n8n-workflow';
 
 import FormData from 'form-data';
@@ -234,7 +237,7 @@ export class MaisaWorker implements INodeType {
 		for (let i = 0; i < items.length; i++) {
 			try {
 				if (operation === 'runWorker' || operation === 'runWorkerAsync') {
-					const result = await this.runWorker(i, baseUrl, apiKey);
+					const result = await runWorker.call(this, i, baseUrl, apiKey);
 					
 					if (operation === 'runWorker') {
 						// Wait for completion
@@ -243,20 +246,23 @@ export class MaisaWorker implements INodeType {
 						const autoDownloadFiles = this.getNodeParameter('autoDownloadFiles', i) as boolean;
 						
 						const executionId = result.data as string;
-						const finalResult = await this.waitForCompletion(executionId, baseUrl, apiKey, pollingInterval, timeout);
+						const finalResult = await waitForCompletion.call(this, executionId, baseUrl, apiKey, pollingInterval, timeout);
 						
-						let outputFiles: IDataObject[] = [];
+						let binaryFiles: IBinaryKeyData | undefined;
+						let filesList: IDataObject[] = [];
 						if (autoDownloadFiles) {
-							outputFiles = await this.downloadAllFiles(executionId, baseUrl, apiKey, i);
+							const downloadedFiles = await downloadAllFiles.call(this, executionId, baseUrl, apiKey, i);
+							binaryFiles = createBinaryData(downloadedFiles);
+							filesList = downloadedFiles.map(f => ({ fileName: f.fileName, mimeType: f.mimeType }));
 						}
 						
 						returnData.push({
 							json: {
 								...finalResult,
 								executionId,
-								outputFiles,
+								outputFiles: filesList,
 							},
-							binary: outputFiles.length > 0 ? this.createBinaryData(outputFiles) : undefined,
+							binary: binaryFiles,
 						});
 					} else {
 						returnData.push({ json: result });
@@ -264,12 +270,12 @@ export class MaisaWorker implements INodeType {
 					
 				} else if (operation === 'getStatus') {
 					const executionId = this.getNodeParameter('executionId', i) as string;
-					const result = await this.getStatus(executionId, baseUrl, apiKey);
+					const result = await getStatus.call(this, executionId, baseUrl, apiKey);
 					returnData.push({ json: result });
 					
 				} else if (operation === 'listFiles') {
 					const executionId = this.getNodeParameter('executionId', i) as string;
-					const result = await this.listFiles(executionId, baseUrl, apiKey);
+					const result = await listFiles.call(this, executionId, baseUrl, apiKey);
 					returnData.push({ json: result });
 					
 				} else if (operation === 'downloadFile') {
@@ -277,7 +283,7 @@ export class MaisaWorker implements INodeType {
 					const fileName = this.getNodeParameter('fileName', i) as string;
 					const binaryProperty = this.getNodeParameter('binaryProperty', i) as string;
 					
-					const fileData = await this.downloadFile(executionId, fileName, baseUrl, apiKey);
+					const fileData = await downloadFile.call(this, executionId, fileName, baseUrl, apiKey);
 					
 					returnData.push({
 						json: {
@@ -293,7 +299,7 @@ export class MaisaWorker implements INodeType {
 				if (this.continueOnFail()) {
 					returnData.push({
 						json: {
-							error: error.message,
+							error: (error as Error).message,
 						},
 						pairedItem: { item: i },
 					});
@@ -305,202 +311,206 @@ export class MaisaWorker implements INodeType {
 
 		return [returnData];
 	}
+}
 
-	private async runWorker(
-		itemIndex: number,
-		baseUrl: string,
-		apiKey: string,
-	): Promise<IDataObject> {
-		const inputVariablesData = this.getNodeParameter('inputVariables.variable', itemIndex, []) as IDataObject[];
-		const filesProperty = this.getNodeParameter('files', itemIndex, '') as string;
+async function runWorker(
+	this: IExecuteFunctions,
+	itemIndex: number,
+	baseUrl: string,
+	apiKey: string,
+): Promise<IDataObject> {
+	const inputVariablesData = this.getNodeParameter('inputVariables.variable', itemIndex, []) as IDataObject[];
+	const filesProperty = this.getNodeParameter('files', itemIndex, '') as string;
 
-		const formData = new FormData();
+	const formData = new FormData();
 
-		// Add input variables
-		const inputVariables = inputVariablesData.map((variable: IDataObject) => ({
-			name: variable.name,
-			value: variable.value,
-		}));
+	// Add input variables
+	const inputVariables = inputVariablesData.map((variable: IDataObject) => ({
+		name: variable.name,
+		value: variable.value,
+	}));
+	
+	formData.append('inputVariables', JSON.stringify(inputVariables));
+
+	// Add files if specified
+	if (filesProperty) {
+		const fileProperties = filesProperty.split(',').map(prop => prop.trim());
 		
-		formData.append('inputVariables', JSON.stringify(inputVariables));
-
-		// Add files if specified
-		if (filesProperty) {
-			const fileProperties = filesProperty.split(',').map(prop => prop.trim());
+		for (const prop of fileProperties) {
+			const binaryData = this.helpers.assertBinaryData(itemIndex, prop);
+			const buffer = await this.helpers.getBinaryDataBuffer(itemIndex, prop);
 			
-			for (const prop of fileProperties) {
-				const binaryData = this.helpers.assertBinaryData(itemIndex, prop);
-				const buffer = await this.helpers.getBinaryDataBuffer(itemIndex, prop);
-				
-				formData.append('files', buffer, {
-					filename: binaryData.fileName || 'file',
-					contentType: binaryData.mimeType,
-				});
-			}
-		}
-
-		const options = {
-			method: 'POST',
-			url: `${baseUrl}/run`,
-			headers: {
-				'ms-api-key': apiKey,
-				...formData.getHeaders(),
-			},
-			body: formData,
-			json: false,
-		};
-
-		const response = await this.helpers.request(options);
-		return JSON.parse(response);
-	}
-
-	private async getStatus(
-		executionId: string,
-		baseUrl: string,
-		apiKey: string,
-	): Promise<IDataObject> {
-		const options = {
-			method: 'GET',
-			url: `${baseUrl}/run/${executionId}`,
-			headers: {
-				'ms-api-key': apiKey,
-			},
-			json: true,
-		};
-
-		return await this.helpers.request(options);
-	}
-
-	private async listFiles(
-		executionId: string,
-		baseUrl: string,
-		apiKey: string,
-	): Promise<IDataObject> {
-		const options = {
-			method: 'GET',
-			url: `${baseUrl}/run/${executionId}/files`,
-			headers: {
-				'ms-api-key': apiKey,
-			},
-			json: true,
-		};
-
-		return await this.helpers.request(options);
-	}
-
-	private async downloadFile(
-		executionId: string,
-		fileName: string,
-		baseUrl: string,
-		apiKey: string,
-	): Promise<IDataObject> {
-		const options = {
-			method: 'GET',
-			url: `${baseUrl}/run/${executionId}/files/${fileName}`,
-			headers: {
-				'ms-api-key': apiKey,
-			},
-			encoding: null,
-			json: false,
-		};
-
-		const response = await this.helpers.request(options);
-		
-		return {
-			data: Buffer.from(response),
-			fileName,
-			mimeType: this.getMimeType(fileName),
-		} as IDataObject;
-	}
-
-	private async waitForCompletion(
-		executionId: string,
-		baseUrl: string,
-		apiKey: string,
-		pollingInterval: number,
-		timeout: number,
-	): Promise<IDataObject> {
-		const startTime = Date.now();
-		const timeoutMs = timeout * 1000;
-		const intervalMs = pollingInterval * 1000;
-
-		while (true) {
-			const elapsed = Date.now() - startTime;
-			if (elapsed > timeoutMs) {
-				throw new NodeOperationError(
-					this.getNode(),
-					`Worker execution timed out after ${timeout} seconds`,
-				);
-			}
-
-			const status = await this.getStatus(executionId, baseUrl, apiKey);
-			const statusData = status.data as IDataObject;
-			
-			// Check if execution is complete (you may need to adjust this based on actual API response)
-			if (statusData.result !== null && statusData.result !== undefined && statusData.result !== '') {
-				return statusData;
-			}
-
-			// Wait before next poll
-			await new Promise(resolve => setTimeout(resolve, intervalMs));
-		}
-	}
-
-	private async downloadAllFiles(
-		executionId: string,
-		baseUrl: string,
-		apiKey: string,
-		itemIndex: number,
-	): Promise<IDataObject[]> {
-		const filesResponse = await this.listFiles(executionId, baseUrl, apiKey);
-		const filesData = filesResponse.data as IDataObject;
-		const outFiles = (filesData.out || []) as IDataObject[];
-		
-		const downloadedFiles: IDataObject[] = [];
-		
-		for (const file of outFiles) {
-			const fileName = file.fileName as string;
-			const fileData = await this.downloadFile(executionId, fileName, baseUrl, apiKey);
-			downloadedFiles.push({
-				fileName,
-				...fileData,
+			formData.append('files', buffer, {
+				filename: binaryData.fileName || 'file',
+				contentType: binaryData.mimeType,
 			});
 		}
-		
-		return downloadedFiles;
 	}
 
-	private createBinaryData(files: IDataObject[]): IDataObject {
-		const binaryData: IDataObject = {};
-		
-		files.forEach((file, index) => {
-			const propertyName = files.length === 1 ? 'data' : `data${index}`;
-			binaryData[propertyName] = {
-				data: file.data,
-				fileName: file.fileName,
-				mimeType: file.mimeType,
-			};
-		});
-		
-		return binaryData;
-	}
+	const options = {
+		method: 'POST' as IHttpRequestMethods,
+		url: `${baseUrl}/run`,
+		headers: {
+			'ms-api-key': apiKey,
+			...formData.getHeaders(),
+		},
+		body: formData,
+		json: false,
+	};
 
-	private getMimeType(fileName: string): string {
-		const extension = fileName.split('.').pop()?.toLowerCase();
-		const mimeTypes: { [key: string]: string } = {
-			'pdf': 'application/pdf',
-			'png': 'image/png',
-			'jpg': 'image/jpeg',
-			'jpeg': 'image/jpeg',
-			'gif': 'image/gif',
-			'txt': 'text/plain',
-			'json': 'application/json',
-			'xml': 'application/xml',
-			'csv': 'text/csv',
-			'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-			'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	const response = await this.helpers.request(options);
+	return JSON.parse(response);
+}
+
+async function getStatus(
+	this: IExecuteFunctions,
+	executionId: string,
+	baseUrl: string,
+	apiKey: string,
+): Promise<IDataObject> {
+	const options = {
+		method: 'GET' as IHttpRequestMethods,
+		url: `${baseUrl}/run/${executionId}`,
+		headers: {
+			'ms-api-key': apiKey,
+		},
+		json: true,
+	};
+
+	return await this.helpers.request(options);
+}
+
+async function listFiles(
+	this: IExecuteFunctions,
+	executionId: string,
+	baseUrl: string,
+	apiKey: string,
+): Promise<IDataObject> {
+	const options = {
+		method: 'GET' as IHttpRequestMethods,
+		url: `${baseUrl}/run/${executionId}/files`,
+		headers: {
+			'ms-api-key': apiKey,
+		},
+		json: true,
+	};
+
+	return await this.helpers.request(options);
+}
+
+async function downloadFile(
+	this: IExecuteFunctions,
+	executionId: string,
+	fileName: string,
+	baseUrl: string,
+	apiKey: string,
+): Promise<IBinaryData> {
+	const options = {
+		method: 'GET' as IHttpRequestMethods,
+		url: `${baseUrl}/run/${executionId}/files/${fileName}`,
+		headers: {
+			'ms-api-key': apiKey,
+		},
+		encoding: null,
+		json: false,
+	};
+
+	const response = await this.helpers.request(options);
+	const buffer = Buffer.isBuffer(response) ? response : Buffer.from(response);
+	
+	return {
+		data: buffer.toString('base64'),
+		fileName,
+		mimeType: getMimeType(fileName),
+	};
+}
+
+async function waitForCompletion(
+	this: IExecuteFunctions,
+	executionId: string,
+	baseUrl: string,
+	apiKey: string,
+	pollingInterval: number,
+	timeout: number,
+): Promise<IDataObject> {
+	const startTime = Date.now();
+	const timeoutMs = timeout * 1000;
+	const intervalMs = pollingInterval * 1000;
+
+	while (true) {
+		const elapsed = Date.now() - startTime;
+		if (elapsed > timeoutMs) {
+			throw new NodeOperationError(
+				this.getNode(),
+				`Worker execution timed out after ${timeout} seconds`,
+			);
+		}
+
+		const status = await getStatus.call(this, executionId, baseUrl, apiKey);
+		const statusData = status.data as IDataObject;
+		
+		// Check if execution is complete (you may need to adjust this based on actual API response)
+		if (statusData.result !== null && statusData.result !== undefined && statusData.result !== '') {
+			return statusData;
+		}
+
+		// Wait before next poll
+		await new Promise(resolve => setTimeout(resolve, intervalMs));
+	}
+}
+
+async function downloadAllFiles(
+	this: IExecuteFunctions,
+	executionId: string,
+	baseUrl: string,
+	apiKey: string,
+	itemIndex: number,
+): Promise<IBinaryData[]> {
+	const filesResponse = await listFiles.call(this, executionId, baseUrl, apiKey);
+	const filesData = filesResponse.data as IDataObject;
+	const outFiles = (filesData.out || []) as IDataObject[];
+	
+	const downloadedFiles: IBinaryData[] = [];
+	
+	for (const file of outFiles) {
+		const fileName = file.fileName as string;
+		const fileData = await downloadFile.call(this, executionId, fileName, baseUrl, apiKey);
+		downloadedFiles.push(fileData);
+	}
+	
+	return downloadedFiles;
+}
+
+function createBinaryData(files: IBinaryData[]): IBinaryKeyData {
+	const binaryData: IBinaryKeyData = {};
+	
+	files.forEach((file, index) => {
+		const propertyName = files.length === 1 ? 'data' : `data${index}`;
+		binaryData[propertyName] = {
+			data: file.data,
+			fileName: file.fileName,
+			mimeType: file.mimeType,
 		};
-		
-		return mimeTypes[extension || ''] || 'application/octet-stream';
-	}
+	});
+	
+	return binaryData;
+}
+
+function getMimeType(fileName: string): string {
+	const extension = fileName.split('.').pop()?.toLowerCase();
+	const mimeTypes: { [key: string]: string } = {
+		'pdf': 'application/pdf',
+		'png': 'image/png',
+		'jpg': 'image/jpeg',
+		'jpeg': 'image/jpeg',
+		'gif': 'image/gif',
+		'txt': 'text/plain',
+		'json': 'application/json',
+		'xml': 'application/xml',
+		'csv': 'text/csv',
+		'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+		'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	};
+	
+	return mimeTypes[extension || ''] || 'application/octet-stream';
 }
