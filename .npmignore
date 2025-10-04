@@ -1,0 +1,30 @@
+# Source files
+*.ts
+!*.d.ts
+tsconfig.json
+
+# Development files
+.eslintrc.js
+.prettierrc.js
+gulpfile.js
+
+# Documentation (keep README.md)
+INSTALLATION.md
+EXAMPLES.md
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# Logs
+*.log
+
+# Dependencies
+node_modules
+
+# Build artifacts
+*.tsbuildinfo
