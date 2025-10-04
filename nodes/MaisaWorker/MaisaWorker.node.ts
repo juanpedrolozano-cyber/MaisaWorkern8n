@@ -357,8 +357,31 @@ async function runWorker(
 			'ms-api-key': apiKey,
 			...formData.getHeaders(),
 		},
-		body: formData,
+		formData: {
+			inputVariables: JSON.stringify(inputVariables),
+		},
 	};
+
+	// Add files to formData option if present
+	if (filesProperty) {
+		const fileProperties = filesProperty.split(',').map(prop => prop.trim());
+		const files = [];
+		
+		for (const prop of fileProperties) {
+			const binaryData = this.helpers.assertBinaryData(itemIndex, prop);
+			const buffer = await this.helpers.getBinaryDataBuffer(itemIndex, prop);
+			
+			files.push({
+				value: buffer,
+				options: {
+					filename: binaryData.fileName || 'file',
+					contentType: binaryData.mimeType,
+				},
+			});
+		}
+		
+		(options as any).formData.files = files;
+	}
 
 	const response = await this.helpers.request(options);
 	return typeof response === 'string' ? JSON.parse(response) : response;
