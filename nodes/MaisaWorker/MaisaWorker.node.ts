@@ -403,14 +403,15 @@ async function getStatus(
 	baseUrl: string,
 	apiKey: string,
 ): Promise<IDataObject> {
-	let cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-	if (cleanBaseUrl.endsWith('/run')) {
-		cleanBaseUrl = cleanBaseUrl.slice(0, -4);
-	}
+	// Extract base domain from worker URL
+	// From: https://studio-api.maisa.ai/deployed/68dcd2e4eb3b0fa4c9af3aa4/run
+	// To: https://studio-api.maisa.ai
+	const urlParts = baseUrl.match(/^(https?:\/\/[^\/]+)/);
+	const baseDomain = urlParts ? urlParts[1] : baseUrl;
 	
 	const options = {
 		method: 'GET' as IHttpRequestMethods,
-		url: `${cleanBaseUrl}/run/${executionId}`,
+		url: `${baseDomain}/runs/${executionId}/detail`,
 		headers: {
 			'ms-api-key': apiKey,
 		},
@@ -426,14 +427,13 @@ async function listFiles(
 	baseUrl: string,
 	apiKey: string,
 ): Promise<IDataObject> {
-	let cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-	if (cleanBaseUrl.endsWith('/run')) {
-		cleanBaseUrl = cleanBaseUrl.slice(0, -4);
-	}
+	// Extract base domain from worker URL
+	const urlParts = baseUrl.match(/^(https?:\/\/[^\/]+)/);
+	const baseDomain = urlParts ? urlParts[1] : baseUrl;
 	
 	const options = {
 		method: 'GET' as IHttpRequestMethods,
-		url: `${cleanBaseUrl}/run/${executionId}/files`,
+		url: `${baseDomain}/runs/${executionId}/file/listed?limit=100`,
 		headers: {
 			'ms-api-key': apiKey,
 		},
@@ -450,14 +450,13 @@ async function downloadFile(
 	baseUrl: string,
 	apiKey: string,
 ): Promise<IBinaryData> {
-	let cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-	if (cleanBaseUrl.endsWith('/run')) {
-		cleanBaseUrl = cleanBaseUrl.slice(0, -4);
-	}
+	// Extract base domain from worker URL
+	const urlParts = baseUrl.match(/^(https?:\/\/[^\/]+)/);
+	const baseDomain = urlParts ? urlParts[1] : baseUrl;
 	
 	const options = {
 		method: 'GET' as IHttpRequestMethods,
-		url: `${cleanBaseUrl}/run/${executionId}/files/${fileName}`,
+		url: `${baseDomain}/runs/${executionId}/file/${fileName}`,
 		headers: {
 			'ms-api-key': apiKey,
 		},
