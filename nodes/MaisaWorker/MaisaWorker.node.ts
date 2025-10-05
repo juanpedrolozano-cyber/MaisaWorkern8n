@@ -19,54 +19,14 @@ export class MaisaWorker implements INodeType {
 		icon: 'file:maisaworker.svg',
 		group: ['transform'],
 		version: 1,
-		subtitle: '={{$parameter["operation"]}}',
-		description: 'Interact with Maisa Worker API to run AI workers and retrieve results',
+		description: 'Run Maisa Worker and stream execution steps in real-time',
 		defaults: {
 			name: 'Maisa Worker',
 		},
 		inputs: ['main'],
-		outputs: ['main'],
+		outputs: ['main', 'main'],
+		outputNames: ['Steps', 'Final Result'],
 		properties: [
-			{
-				displayName: 'Operation',
-				name: 'operation',
-				type: 'options',
-				noDataExpression: true,
-				options: [
-					{
-						name: 'Run Worker',
-						value: 'runWorker',
-						description: 'Start a worker execution and wait for completion',
-						action: 'Run a worker and wait for results',
-					},
-					{
-						name: 'Run Worker (Async)',
-						value: 'runWorkerAsync',
-						description: 'Start a worker execution without waiting',
-						action: 'Run a worker asynchronously',
-					},
-					{
-						name: 'Get Status',
-						value: 'getStatus',
-						description: 'Get the status of a worker execution',
-						action: 'Get worker execution status',
-					},
-					{
-						name: 'List Files',
-						value: 'listFiles',
-						description: 'List files from a worker execution',
-						action: 'List execution files',
-					},
-					{
-						name: 'Download File',
-						value: 'downloadFile',
-						description: 'Download a file from a worker execution',
-						action: 'Download a file',
-					},
-				],
-				default: 'runWorker',
-			},
-			// Base URL
 			{
 				displayName: 'Worker URL',
 				name: 'baseUrl',
@@ -74,7 +34,7 @@ export class MaisaWorker implements INodeType {
 				default: '',
 				required: true,
 				placeholder: 'https://studio-api.maisa.ai/deployed/YOUR_WORKER_ID/run',
-				description: 'The full URL of your Maisa Worker endpoint (with or without /run)',
+				description: 'The full URL of your Maisa Worker endpoint',
 			},
 			{
 				displayName: 'API Key',
@@ -87,18 +47,12 @@ export class MaisaWorker implements INodeType {
 				required: true,
 				description: 'The API key for this specific worker (ms-api-key header)',
 			},
-			// Run Worker fields
 			{
 				displayName: 'Input Variables',
 				name: 'inputVariables',
 				type: 'fixedCollection',
 				typeOptions: {
 					multipleValues: true,
-				},
-				displayOptions: {
-					show: {
-						operation: ['runWorker', 'runWorkerAsync'],
-					},
 				},
 				default: {},
 				placeholder: 'Add Variable',
@@ -130,11 +84,6 @@ export class MaisaWorker implements INodeType {
 				displayName: 'Files',
 				name: 'files',
 				type: 'string',
-				displayOptions: {
-					show: {
-						operation: ['runWorker', 'runWorkerAsync'],
-					},
-				},
 				default: '',
 				description: 'Binary property name containing files to upload (comma-separated for multiple)',
 			},
@@ -142,170 +91,106 @@ export class MaisaWorker implements INodeType {
 				displayName: 'Polling Interval (seconds)',
 				name: 'pollingInterval',
 				type: 'number',
-				displayOptions: {
-					show: {
-						operation: ['runWorker'],
-					},
-				},
 				default: 5,
-				description: 'How often to check for completion (in seconds)',
+				description: 'How often to check for status updates',
 			},
 			{
 				displayName: 'Timeout (seconds)',
 				name: 'timeout',
 				type: 'number',
-				displayOptions: {
-					show: {
-						operation: ['runWorker'],
-					},
-				},
 				default: 300,
-				description: 'Maximum time to wait for completion (in seconds)',
+				description: 'Maximum time to wait for completion',
 			},
 			{
 				displayName: 'Auto Download Files',
 				name: 'autoDownloadFiles',
 				type: 'boolean',
-				displayOptions: {
-					show: {
-						operation: ['runWorker'],
-					},
-				},
 				default: true,
 				description: 'Whether to automatically download output files when execution completes',
-			},
-			// Get Status fields
-			{
-				displayName: 'Execution ID',
-				name: 'executionId',
-				type: 'string',
-				displayOptions: {
-					show: {
-						operation: ['getStatus', 'listFiles'],
-					},
-				},
-				default: '',
-				required: true,
-				description: 'The ID of the worker execution',
-			},
-			// Download File fields
-			{
-				displayName: 'Execution ID',
-				name: 'executionId',
-				type: 'string',
-				displayOptions: {
-					show: {
-						operation: ['downloadFile'],
-					},
-				},
-				default: '',
-				required: true,
-				description: 'The ID of the worker execution',
-			},
-			{
-				displayName: 'File Name',
-				name: 'fileName',
-				type: 'string',
-				displayOptions: {
-					show: {
-						operation: ['downloadFile'],
-					},
-				},
-				default: '',
-				required: true,
-				description: 'The name of the file to download',
-			},
-			{
-				displayName: 'Binary Property',
-				name: 'binaryProperty',
-				type: 'string',
-				displayOptions: {
-					show: {
-						operation: ['downloadFile'],
-					},
-				},
-				default: 'data',
-				required: true,
-				description: 'Name of the binary property to store the downloaded file',
 			},
 		],
 	};
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		const returnData: INodeExecutionData[] = [];
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const stepsOutput: INodeExecutionData[] = [];
+		const finalOutput: INodeExecutionData[] = [];
+		
 		const baseUrl = this.getNodeParameter('baseUrl', 0) as string;
 		const apiKey = this.getNodeParameter('apiKey', 0) as string;
+		const pollingInterval = this.getNodeParameter('pollingInterval', 0) as number;
+		const timeout = this.getNodeParameter('timeout', 0) as number;
+		const autoDownloadFiles = this.getNodeParameter('autoDownloadFiles', 0) as boolean;
 
 		for (let i = 0; i < items.length; i++) {
 			try {
-				if (operation === 'runWorker' || operation === 'runWorkerAsync') {
-					const result = await runWorker.call(this, i, baseUrl, apiKey);
-					
-					if (operation === 'runWorker') {
-						// Wait for completion
-						const pollingInterval = this.getNodeParameter('pollingInterval', i) as number;
-						const timeout = this.getNodeParameter('timeout', i) as number;
-						const autoDownloadFiles = this.getNodeParameter('autoDownloadFiles', i) as boolean;
-						
-						const executionId = result.data as string;
-						const finalResult = await waitForCompletion.call(this, executionId, baseUrl, apiKey, pollingInterval, timeout);
-						
-						let binaryFiles: IBinaryKeyData | undefined;
-						let filesList: IDataObject[] = [];
-						if (autoDownloadFiles) {
-							const downloadedFiles = await downloadAllFiles.call(this, executionId, baseUrl, apiKey, i);
-							binaryFiles = createBinaryData(downloadedFiles);
-							filesList = downloadedFiles.map(f => ({ fileName: f.fileName, mimeType: f.mimeType }));
-						}
-						
-						returnData.push({
-							json: {
-								...finalResult,
-								executionId,
-								outputFiles: filesList,
-							},
-							binary: binaryFiles,
-						});
-					} else {
-						returnData.push({ json: result });
+				// 1. Start worker execution
+				const runResult = await runWorker.call(this, i, baseUrl, apiKey);
+				const executionId = runResult.data as string;
+				
+				// 2. Poll for status updates and emit each step
+				const startTime = Date.now();
+				let isComplete = false;
+				let finalStatus: IDataObject = {};
+				
+				while (!isComplete) {
+					// Check timeout
+					if ((Date.now() - startTime) / 1000 > timeout) {
+						throw new NodeOperationError(this.getNode(), `Execution timed out after ${timeout} seconds`);
 					}
 					
-				} else if (operation === 'getStatus') {
-					const executionId = this.getNodeParameter('executionId', i) as string;
-					const result = await getStatus.call(this, executionId, baseUrl, apiKey);
-					returnData.push({ json: result });
+					// Get current status
+					const status = await getStatus.call(this, executionId, baseUrl, apiKey);
 					
-				} else if (operation === 'listFiles') {
-					const executionId = this.getNodeParameter('executionId', i) as string;
-					const result = await listFiles.call(this, executionId, baseUrl, apiKey);
-					returnData.push({ json: result });
-					
-				} else if (operation === 'downloadFile') {
-					const executionId = this.getNodeParameter('executionId', i) as string;
-					const fileName = this.getNodeParameter('fileName', i) as string;
-					const binaryProperty = this.getNodeParameter('binaryProperty', i) as string;
-					
-					const fileData = await downloadFile.call(this, executionId, fileName, baseUrl, apiKey);
-					
-					returnData.push({
+					// Emit step output
+					stepsOutput.push({
 						json: {
-							fileName,
 							executionId,
-						},
-						binary: {
-							[binaryProperty]: fileData,
+							status: status.data || status,
+							timestamp: new Date().toISOString(),
 						},
 					});
+					
+					// Check if complete
+					const statusData = status.data as IDataObject;
+					if (statusData && (statusData.status === 'completed' || statusData.status === 'failed' || statusData.status === 'error')) {
+						isComplete = true;
+						finalStatus = statusData;
+					}
+					
+					if (!isComplete) {
+						// Wait before next poll
+						await new Promise(resolve => setTimeout(resolve, pollingInterval * 1000));
+					}
 				}
+				
+				// 3. Download files if requested
+				let binaryFiles: IBinaryKeyData | undefined;
+				let filesList: IDataObject[] = [];
+				
+				if (autoDownloadFiles && finalStatus.status === 'completed') {
+					const downloadedFiles = await downloadAllFiles.call(this, executionId, baseUrl, apiKey, i);
+					binaryFiles = createBinaryData(downloadedFiles);
+					filesList = downloadedFiles.map(f => ({ fileName: f.fileName, mimeType: f.mimeType }));
+				}
+				
+				// 4. Emit final result
+				finalOutput.push({
+					json: {
+						executionId,
+						status: finalStatus,
+						outputFiles: filesList,
+						completedAt: new Date().toISOString(),
+					},
+					binary: binaryFiles,
+				});
+				
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({
+					finalOutput.push({
 						json: {
 							error: (error as Error).message,
 						},
-						pairedItem: { item: i },
 					});
 					continue;
 				}
@@ -313,7 +198,7 @@ export class MaisaWorker implements INodeType {
 			}
 		}
 
-		return [returnData];
+		return [stepsOutput, finalOutput];
 	}
 }
 
